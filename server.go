@@ -3,25 +3,51 @@ package main
 import (
 	"fmt"
 	"net"
+	"sync"
 )
 
 type Server struct {
-	Ip   string
-	Port int
+	Ip             string
+	Port           int
+	OnlineUsersMap map[string]*User
+	mapLock        sync.RWMutex
+	Message        chan string
 }
 
-// function to create a new server
-func NewServer(ip string, port int) *Server {
-	server := &Server{
-		Ip:   ip,
-		Port: port,
+// listen message method for server
+func (this *Server) Listen() {
+	for {
+		msg := <-this.Message
+
+		this.mapLock.Lock()
+		for _, cli := range this.OnlineUsersMap {
+			cli.C <- msg
+		}
+		this.mapLock.Unlock()
 	}
-	return server
 }
 
-// handler method for Server
-func (this *Server) Handler(conn net.Conn) {
-	fmt.Println("Connection Established.")
+// broacast method for server
+func (this *Server) Broadcast(user *User, msg string) {
+	msg = "[" + user.Addr + "]" + user.Name + ":" + msg
+	this.Message <- msg
+}
+
+// handle method for Server
+func (this *Server) Handle(conn net.Conn) {
+
+	//add user to map
+	user := NewUser(conn)
+
+	this.mapLock.Lock()
+	this.OnlineUsersMap[user.Name] = user
+	this.mapLock.Unlock()
+
+	//boradcast the message
+	this.Broadcast(user, "is online")
+
+	//block handeler
+	select {}
 }
 
 // start method for Server
@@ -37,6 +63,9 @@ func (this *Server) Start() {
 	//close listen socket
 	defer listener.Close()
 
+	//start listen to messages
+	go this.Listen()
+
 	for {
 		//accept
 		conn, err := listener.Accept()
@@ -45,7 +74,18 @@ func (this *Server) Start() {
 			continue
 		}
 
-		//do handler
-		go this.Handler(conn)
+		//do handle
+		go this.Handle(conn)
 	}
+}
+
+// function to create a new server
+func NewServer(ip string, port int) *Server {
+	server := &Server{
+		Ip:             ip,
+		Port:           port,
+		OnlineUsersMap: make(map[string]*User),
+		Message:        make(chan string),
+	}
+	return server
 }
