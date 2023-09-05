@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"io"
 	"net"
 	"sync"
 )
@@ -20,8 +21,8 @@ func (this *Server) Listen() {
 		msg := <-this.Message
 
 		this.mapLock.Lock()
-		for _, cli := range this.OnlineUsersMap {
-			cli.C <- msg
+		for _, client := range this.OnlineUsersMap {
+			client.C <- msg
 		}
 		this.mapLock.Unlock()
 	}
@@ -45,6 +46,30 @@ func (this *Server) Handle(conn net.Conn) {
 
 	//boradcast the message
 	this.Broadcast(user, "is online")
+
+	//go routine to broadcast message
+	go func() {
+		buf := make([]byte, 4096)
+		for {
+			n, err := conn.Read(buf)
+
+			//connection is closed
+			if n == 0 {
+				this.Broadcast(user, "logged off")
+				return
+			}
+
+			if err != nil && err != io.EOF {
+				fmt.Println("conn read err", err)
+				return
+			}
+
+			//get red of \n
+			msg := string(buf[:n-1])
+
+			this.Broadcast(user, msg)
+		}
+	}()
 
 	//block handeler
 	select {}
