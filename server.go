@@ -7,6 +7,7 @@ import (
 	"sync"
 )
 
+// Server represents a chat server.
 type Server struct {
 	Ip             string
 	Port           int
@@ -15,47 +16,39 @@ type Server struct {
 	Message        chan string
 }
 
-// listen message method for server
-func (this *Server) Listen() {
+// Listen continuously listens for incoming messages and broadcasts them to all users.
+func (server *Server) Listen() {
 	for {
-		msg := <-this.Message
+		msg := <-server.Message
 
-		this.mapLock.Lock()
-		for _, client := range this.OnlineUsersMap {
+		server.mapLock.Lock()
+		for _, client := range server.OnlineUsersMap {
 			client.C <- msg
 		}
-		this.mapLock.Unlock()
+		server.mapLock.Unlock()
 	}
 }
 
-// broacast method for server
-func (this *Server) Broadcast(user *User, msg string) {
+// Broadcast sends a message to all connected users.
+func (server *Server) Broadcast(user *User, msg string) {
 	msg = "[" + user.Addr + "]" + user.Name + ":" + msg
-	this.Message <- msg
+	server.Message <- msg
 }
 
-// handle method for Server
-func (this *Server) Handle(conn net.Conn) {
+// Handle manages a user's connection and broadcasts their messages.
+func (server *Server) Handle(conn net.Conn) {
+	user := NewUser(conn, server)
+	user.Login()
 
-	//add user to map
-	user := NewUser(conn)
-
-	this.mapLock.Lock()
-	this.OnlineUsersMap[user.Name] = user
-	this.mapLock.Unlock()
-
-	//boradcast the message
-	this.Broadcast(user, "is online")
-
-	//go routine to broadcast message
+	// Goroutine to broadcast messages
 	go func() {
 		buf := make([]byte, 4096)
 		for {
 			n, err := conn.Read(buf)
 
-			//connection is closed
+			// Connection is closed
 			if n == 0 {
-				this.Broadcast(user, "logged off")
+				user.Logout()
 				return
 			}
 
@@ -64,47 +57,51 @@ func (this *Server) Handle(conn net.Conn) {
 				return
 			}
 
-			//get red of \n
+			// Remove newline character and broadcast message
 			msg := string(buf[:n-1])
+			user.SendMessage(msg)
 
-			this.Broadcast(user, msg)
+			// Check for logout command
+			if msg == "/logout" {
+				user.Logout()
+				return
+			}
 		}
 	}()
 
-	//block handeler
+	// Block indefinitely
 	select {}
 }
 
-// start method for Server
-func (this *Server) Start() {
-	//socket listener
-	listener, err := net.Listen("tcp", fmt.Sprintf("%s:%d", this.Ip, this.Port))
-
+// Start starts the server and listens for incoming connections.
+func (server *Server) Start() {
+	// Socket listener
+	listener, err := net.Listen("tcp", fmt.Sprintf("%s:%d", server.Ip, server.Port))
 	if err != nil {
 		fmt.Println("net.Listen err: ", err)
 		return
 	}
 
-	//close listen socket
+	//Close listen socket
 	defer listener.Close()
 
-	//start listen to messages
-	go this.Listen()
+	// Start listening to messages
+	go server.Listen()
 
 	for {
-		//accept
+		// Accept incoming connections
 		conn, err := listener.Accept()
 		if err != nil {
-			fmt.Println("net.Listen accrpt err: ", err)
+			fmt.Println("net.Listen accept err: ", err)
 			continue
 		}
 
-		//do handle
-		go this.Handle(conn)
+		// Handle the connection in a goroutine
+		go server.Handle(conn)
 	}
 }
 
-// function to create a new server
+// NewServer creates a new chat server instance.
 func NewServer(ip string, port int) *Server {
 	server := &Server{
 		Ip:             ip,
